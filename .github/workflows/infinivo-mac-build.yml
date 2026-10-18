@@ -1,0 +1,51 @@
+name: Infinivo patched Mac build
+# Unsigned arm64 build of Cap Desktop with the upload-resilience patch.
+on:
+  workflow_dispatch:
+  push:
+    branches: [upload-resilience]
+    paths: [apps/desktop/src-tauri/src/upload.rs, .github/workflows/infinivo-mac-build.yml]
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 300
+    env:
+      TARGET: aarch64-apple-darwin
+      RUST_TARGET_TRIPLE: aarch64-apple-darwin
+      CAP_BUNDLE: apps/desktop-gpui/target/aarch64-apple-darwin/release/bundle
+      CARGO_PROFILE_RELEASE_DEBUG: "0"
+      CARGO_PROFILE_RELEASE_STRIP: symbols
+      CARGO_PROFILE_RELEASE_LTO: thin
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+      CI: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          targets: aarch64-apple-darwin
+      - uses: ./.github/actions/setup-js
+      - name: Env file
+        run: |
+          {
+            echo "VITE_ENVIRONMENT=production"
+            echo "NEXT_PUBLIC_WEB_URL=https://cap.so"
+            echo "NEXTAUTH_URL=https://cap.so"
+            echo "VITE_SERVER_URL=https://cap.so"
+            echo "RUST_TARGET_TRIPLE=aarch64-apple-darwin"
+          } >> .env
+      - name: cap-setup
+        run: bun run cap-setup
+      - name: Build desktop binaries
+        run: ./scripts/build-desktop-binaries.sh aarch64-apple-darwin
+      - name: Bundle app
+        run: node scripts/bundle-gpui.mjs "$TARGET" --bundles app
+      - name: Ad-hoc sign and zip
+        run: |
+          APP=$(ls -d "$CAP_BUNDLE"/macos/*.app | head -1)
+          codesign --force --deep -s - "$APP"
+          ditto -c -k --keepParent "$APP" Cap-patched-arm64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Cap-patched-arm64
+          path: Cap-patched-arm64.zip
+          retention-days: 30
