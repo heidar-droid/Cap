@@ -1,0 +1,51 @@
+name: Infinivo patched 0.6.0 Mac build
+on:
+  workflow_dispatch:
+  push:
+    branches: [v060-upload-resilience]
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 300
+    env:
+      RUST_TARGET_TRIPLE: aarch64-apple-darwin
+      CARGO_PROFILE_RELEASE_DEBUG: "0"
+      CARGO_PROFILE_RELEASE_STRIP: symbols
+      CARGO_PROFILE_RELEASE_LTO: thin
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+      CI: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          targets: aarch64-apple-darwin
+      - uses: ./.github/actions/setup-js
+      - name: Env file
+        run: |
+          {
+            echo "appVersion=0.6.0"
+            echo "VITE_ENVIRONMENT=production"
+            echo "NEXT_PUBLIC_WEB_URL=https://cap.so"
+            echo "NEXTAUTH_URL=https://cap.so"
+            echo "VITE_SERVER_URL=https://cap.so"
+            echo "RUST_TARGET_TRIPLE=aarch64-apple-darwin"
+          } >> .env
+      - name: cap-setup
+        run: bun run cap-setup
+      - name: Build desktop binaries
+        run: ./scripts/build-desktop-binaries.sh aarch64-apple-darwin
+      - name: Build app
+        working-directory: apps/desktop
+        # the .app exists before tauri tries to sign the updater archive; we have no updater key
+        run: node ../../scripts/build-macos-packages.mjs aarch64-apple-darwin --config src-tauri/tauri.prod.conf.json || test -n "$(find ../../target -path '*aarch64-apple-darwin/release/bundle/macos/*.app' -maxdepth 6 -type d | head -1)"
+      - name: Ad-hoc sign and zip
+        run: |
+          APP=$(find target -path '*aarch64-apple-darwin/release/bundle/macos/*.app' -maxdepth 6 -type d | head -1)
+          echo "app: $APP"
+          codesign --force --deep -s - "$APP"
+          ditto -c -k --keepParent "$APP" Cap-0.6.0-patched-arm64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Cap-0.6.0-patched-arm64
+          path: Cap-0.6.0-patched-arm64.zip
+          retention-days: 30
